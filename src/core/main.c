@@ -7,6 +7,8 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/printk.h>
+#include <linux/sched.h>
+#include <linux/nsproxy.h>
 
 #include "core.h"
 #include "hk.h"
@@ -110,6 +112,51 @@ static unsigned long droid_lkm_offsets = DROID_LKM_DEFAULT_OFFSETS;
 module_param_named(offsets, droid_lkm_offsets, ulong, 0444);
 MODULE_PARM_DESC(offsets, "runtime address of kallsyms_offsets, 0 to scan for it");
 
+/*
+ * does this kernel put task_struct members where the headers say?
+ *
+ * the module reads task members through the build headers, so a vendor config
+ * that inserts a member ahead of nsproxy silently misaligns every later read.
+ * init_task.nsproxy is &init_nsproxy, so finding that pointer inside init_task
+ * gives the runtime offset without needing any other layout knowledge.
+ */
+static int droid_lkm_layout_check(void)
+{
+	unsigned long init_task_addr = droid_lkm_sym("init_task");
+	unsigned long init_nsproxy_addr = droid_lkm_sym("init_nsproxy");
+	unsigned long hdr = offsetof(struct task_struct, nsproxy);
+	unsigned long found = 0;
+	unsigned int i;
+
+	if (!init_task_addr || !init_nsproxy_addr) {
+		droid_lkm_warn("layout: init_task or init_nsproxy not in kallsyms, unchecked\n");
+		return 0;
+	}
+
+	for (i = 0; i + 8 <= 2048; i += 8) {
+		unsigned long v;
+
+		memcpy(&v, (void *)(init_task_addr + i), 8);
+		if (v == init_nsproxy_addr) {
+			found = i;
+			break;
+		}
+	}
+
+	droid_lkm_info("layout: nsproxy runtime=%lu header=%lu sizeof(task_struct)=%lu\n",
+		       found, hdr, sizeof(struct task_struct));
+
+	if (!found) {
+		droid_lkm_err("layout: no nsproxy pointer inside init_task, refusing to load\n");
+		return -EINVAL;
+	}
+	if (found != hdr) {
+		droid_lkm_err("layout: task_struct offsets differ from the build headers, refusing to load\n");
+		return -EINVAL;
+	}
+	return 0;
+}
+
 static int __init droid_lkm_init(void)
 {
 	struct kallrecon_hint hint = { .offsets = droid_lkm_offsets };
@@ -133,6 +180,10 @@ static int __init droid_lkm_init(void)
 	}
 	droid_lkm_info("loaded, klnum=%u offsets=0x%lx\n", klnum_val,
 		       droid_lkm_offsets);
+
+	ret = droid_lkm_layout_check();
+	if (ret)
+		return ret;
 
 	droid_lkm_info("params: verbose=%d skip_sysvipc=%d skip_do_exit=%d no_fake_ns=%d\n",
 		droid_lkm_verbose, droid_lkm_slot_skip_sysvipc(), droid_lkm_pidns_skip_do_exit(),

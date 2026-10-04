@@ -15,8 +15,23 @@ struct droid_lkm_caps droid_lkm_caps;
 static unsigned int droid_lkm_caps_parse_version(void)
 {
 	unsigned int major = 0, minor = 0, patch = 0;
+	unsigned long uts = droid_lkm_sym("init_uts_ns");
+	char buf[__NEW_UTS_LEN + 1];
 
-	if (sscanf(utsname()->release, "%u.%u.%u", &major, &minor, &patch) < 2)
+	/*
+	 * not utsname(): that reads current->nsproxy->uts_ns, so it is only
+	 * correct while task_struct and nsproxy member offsets match the headers
+	 * this module was built against. uts_namespace carries no configuration
+	 * dependent member, so these two offsets are the whole assumption.
+	 */
+	if (!uts)
+		return 0;
+	memcpy(buf, (void *)(uts + offsetof(struct uts_namespace, name) +
+			     offsetof(struct new_utsname, release)),
+	       sizeof(buf));
+	buf[sizeof(buf) - 1] = '\0';
+
+	if (sscanf(buf, "%u.%u.%u", &major, &minor, &patch) < 2)
 		return 0;
 	return DROID_LKM_VERSION(major, minor, patch);
 }
