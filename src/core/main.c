@@ -9,6 +9,7 @@
 #include <linux/printk.h>
 #include <linux/sched.h>
 #include <linux/nsproxy.h>
+#include <linux/slab.h>
 
 #include "core.h"
 #include "hk.h"
@@ -167,20 +168,25 @@ static int droid_lkm_layout_check(void)
 	unsigned long task_addr = droid_lkm_sym("init_task");
 	unsigned long nsproxy_addr = droid_lkm_sym("init_nsproxy");
 	unsigned long rt_nsproxy = 0;
-	unsigned char buf[4096];
-	unsigned int i;
+	unsigned char *buf;
+	unsigned int i, len = 4096;
+	int ret = 0;
 
 	if (!task_addr || !nsproxy_addr) {
 		droid_lkm_warn("layout: init_task or init_nsproxy not in kallsyms, unchecked\n");
 		return 0;
 	}
 
-	memcpy(buf, (void *)task_addr, sizeof(buf));
+	/* not on the stack: the frame limit here is 2048 */
+	buf = kmalloc(len, GFP_KERNEL);
+	if (!buf)
+		return 0;
+	memcpy(buf, (void *)task_addr, len);
 
 	for (i = 0; i < ARRAY_SIZE(droid_lkm_task_anchors); i++) {
 		const char *anchor = droid_lkm_task_anchors[i].anchor;
 		unsigned long addr = droid_lkm_sym(anchor);
-		unsigned long rt = addr ? droid_lkm_find_ptr(buf, sizeof(buf), addr) : 0;
+		unsigned long rt = addr ? droid_lkm_find_ptr(buf, len, addr) : 0;
 		unsigned long hdr = droid_lkm_task_anchors[i].hdr;
 
 		if (droid_lkm_task_anchors[i].hdr == offsetof(struct task_struct, nsproxy))
@@ -197,7 +203,7 @@ static int droid_lkm_layout_check(void)
 	}
 
 	/* parent, real_parent and group_leader all point back at init_task */
-	for (i = 0; i + 8 <= sizeof(buf); i += 8) {
+	for (i = 0; i + 8 <= len; i += 8) {
 		unsigned long v;
 
 		memcpy(&v, buf + i, 8);
@@ -206,7 +212,7 @@ static int droid_lkm_layout_check(void)
 				       (unsigned long)i, sizeof(struct task_struct));
 	}
 	droid_lkm_info("layout: comm rt=%lu hdr=%lu\n",
-		       droid_lkm_find_str(buf, sizeof(buf), "swapper"),
+		       droid_lkm_find_str(buf, len, "swapper"),
 		       offsetof(struct task_struct, comm));
 
 	/* the nsproxy struct itself, same trick */
@@ -220,13 +226,14 @@ static int droid_lkm_layout_check(void)
 
 	if (!rt_nsproxy) {
 		droid_lkm_err("layout: no nsproxy pointer inside init_task, refusing to load\n");
-		return -EINVAL;
-	}
-	if (rt_nsproxy != offsetof(struct task_struct, nsproxy)) {
+		ret = -EINVAL;
+	} else if (rt_nsproxy != offsetof(struct task_struct, nsproxy)) {
 		droid_lkm_err("layout: task_struct offsets differ from the build headers, refusing to load\n");
-		return -EINVAL;
+		ret = -EINVAL;
 	}
-	return 0;
+
+	kfree(buf);
+	return ret;
 }
 
 static int __init droid_lkm_init(void)
