@@ -7,11 +7,13 @@ ODIR := $(MDIR)/out/$(VER)
 DEPS := Type_info KernCall HooKern
 include $(MDIR)/mk/deps.mk
 
-# KallRecon and Type_info ship the same slide.o twice, keep Type_info's copy only
-# (KallRecon core.o pulls slide_init/advance/buf from it)
-DEPS_OBJS_ALL := $(filter-out deps/KallRecon/lib/slide.o,$(DEPS_OBJS_ALL))
+# Type_info used to ship the same slide.o as KallRecon, and its copy was the one
+# kept. That copy predates KallRecon's hole salvaging window: a window that
+# starts on an unreadable page failed outright, so every name lookup came back
+# empty while discovery itself still worked. Type_info has dropped slide, so
+# KallRecon's own implementation is the only one now.
 
-# Type_info: keep port.o (ti_safe_read) and slide.o only, its anchor.o exports
+# Type_info: keep port.o (ti_safe_read) only, its anchor.o exports
 # ti_anchor_set_modname which collides with the same symbol on the device
 DEPS_OBJS_ALL := $(filter-out deps/Type_info/lib/btf.o \
 	deps/Type_info/lib/query.o deps/Type_info/lib/reg.o deps/Type_info/lib/lib.o \
