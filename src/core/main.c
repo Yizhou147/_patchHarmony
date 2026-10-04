@@ -120,6 +120,15 @@ static int __init droid_lkm_init(void)
 	if (!klnum_val || !kallrecon_klp) {
 		droid_lkm_err("kallsyms recovery failed (%d)\n",
 			      kallrecon_fail_reason());
+		droid_lkm_err("  sprint=0x%lx base=0x%lx offs=0x%lx ti=0x%lx names=0x%lx num=%u klnum=%u layout=v%d seqs=0x%lx klp=%ps\n",
+			      sprint_addr, kernel_base, kloffs_addr, klindex_addr,
+			      klnames_addr, klnum_addr ? *(unsigned int *)klnum_addr : 0,
+			      klnum_val, (int)kl_layout, klseqs_addr,
+			      kallrecon_klp);
+		droid_lkm_err("  probe lookup: kallsyms_lookup_name=0x%lx do_exit=0x%lx _stext=0x%lx\n",
+			      kallsyms_name_to_addr("kallsyms_lookup_name"),
+			      kallsyms_name_to_addr("do_exit"),
+			      kallsyms_name_to_addr("_stext"));
 		return -ENODATA;
 	}
 	droid_lkm_info("loaded, klnum=%u offsets=0x%lx\n", klnum_val,
