@@ -15,6 +15,7 @@
 #include "ds_caps.h"
 #include "ds_ipcns.h"
 #include "ds_ksym.h"
+#include "hint.h"
 #include "ds_pidns.h"
 #include "ds_proc.h"
 #include "ds_slot.h"
@@ -95,16 +96,34 @@ static struct hk_cfg droid_lkm_hk_cfg = {
 
 MODULE_PARM_DESC(inline_hook, "install inline hooks, off by default");
 
+/*
+ * on the Redmi G Pro 27U kernel (MTK MT9655, 5.15.148-android14-11) the offsets
+ * run the scan looks for breaks partway, because KALLSYMS_ALL carries per cpu
+ * symbols whose relative offset sits outside the image, so a plain scan ends at
+ * KALLRECON_NO_OFFSETS. seeding the table address skips that search. the kernel
+ * is nokaslr, so the value holds across every boot of one build; offsets=0 gives
+ * the scan back on a kernel that does not need the hint.
+ */
+#define DROID_LKM_DEFAULT_OFFSETS 0xffffffc00911f5a8UL
+
+static unsigned long droid_lkm_offsets = DROID_LKM_DEFAULT_OFFSETS;
+module_param_named(offsets, droid_lkm_offsets, ulong, 0444);
+MODULE_PARM_DESC(offsets, "runtime address of kallsyms_offsets, 0 to scan for it");
+
 static int __init droid_lkm_init(void)
 {
+	struct kallrecon_hint hint = { .offsets = droid_lkm_offsets };
 	int ret;
 
+	kallrecon_supply(&hint);
 	find_kallsyms_base();
 	if (!klnum_val || !kallrecon_klp) {
-		droid_lkm_err("kallsyms recovery failed\n");
+		droid_lkm_err("kallsyms recovery failed (%d)\n",
+			      kallrecon_fail_reason());
 		return -ENODATA;
 	}
-	droid_lkm_info("loaded, klnum=%u\n", klnum_val);
+	droid_lkm_info("loaded, klnum=%u offsets=0x%lx\n", klnum_val,
+		       droid_lkm_offsets);
 
 	droid_lkm_info("params: verbose=%d skip_sysvipc=%d skip_do_exit=%d no_fake_ns=%d\n",
 		droid_lkm_verbose, droid_lkm_slot_skip_sysvipc(), droid_lkm_pidns_skip_do_exit(),
